@@ -123,6 +123,7 @@ object Vault {
             if (ks.containsAlias(ALIAS)) ks.deleteEntry(ALIAS)
         }
         ctx.filesDir.listFiles()?.forEach { it.deleteRecursively() }
+        ctx.cacheDir.listFiles()?.forEach { it.deleteRecursively() }
         prefs(ctx).edit().clear().commit()
     }
 
@@ -315,19 +316,35 @@ object Vault {
 
     // ---------- Dateien ----------
 
-    suspend fun importFile(ctx: Context, uri: Uri) {
+    /**
+     * Verschluesselt eine Datei in den Tresor.
+     * displayName: eigener Name (z. B. fuer Scans). deleteSource: Quelle danach loeschen.
+     */
+    suspend fun importFile(
+        ctx: Context,
+        uri: Uri,
+        displayName: String? = null,
+        deleteSource: Boolean = false
+    ) {
         val mk = mk()
-        var name = "Datei"
+        var name = displayName ?: "Datei"
         var size = -1L
-        ctx.contentResolver.query(uri, null, null, null, null)?.use { c ->
-            if (c.moveToFirst()) {
-                val ni = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                val si = c.getColumnIndex(OpenableColumns.SIZE)
-                if (ni >= 0 && !c.isNull(ni)) name = c.getString(ni)
-                if (si >= 0 && !c.isNull(si)) size = c.getLong(si)
+        if (uri.scheme == "file") {
+            uri.path?.let { size = File(it).length() }
+        } else {
+            runCatching {
+                ctx.contentResolver.query(uri, null, null, null, null)?.use { c ->
+                    if (c.moveToFirst()) {
+                        val ni = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        val si = c.getColumnIndex(OpenableColumns.SIZE)
+                        if (displayName == null && ni >= 0 && !c.isNull(ni)) name = c.getString(ni)
+                        if (si >= 0 && !c.isNull(si)) size = c.getLong(si)
+                    }
+                }
             }
         }
         if (size >= 0 && usedBytes() + size > QUOTA) {
+            if (deleteSource) deleteQuietly(ctx, uri)
             throw IOException("Nicht genug Platz im 5-GB-Tresor")
         }
         val id = UUID.randomUUID().toString()
@@ -348,6 +365,17 @@ object Vault {
             throw e
         } finally {
             busy = false
+            if (deleteSource) deleteQuietly(ctx, uri)
+        }
+    }
+
+    private fun deleteQuietly(ctx: Context, uri: Uri) {
+        runCatching {
+            if (uri.scheme == "file") {
+                uri.path?.let { File(it).delete() }
+            } else {
+                ctx.contentResolver.delete(uri, null, null)
+            }
         }
     }
 

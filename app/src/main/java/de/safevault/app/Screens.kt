@@ -1,8 +1,10 @@
 package de.safevault.app
 
+import android.app.Activity
 import android.security.keystore.KeyPermanentlyInvalidatedException
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
@@ -70,6 +72,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
+import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
+import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -384,6 +389,51 @@ fun HomeScreen(onWiped: () -> Unit) {
         }
     }
 
+    val scanLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { res ->
+        if (res.resultCode == Activity.RESULT_OK) {
+            val result = GmsDocumentScanningResult.fromActivityResultIntent(res.data)
+            val pdf = result?.pdf
+            if (pdf != null) {
+                scope.launch {
+                    busyText = "Verschlüssele Scan …"
+                    try {
+                        val stamp = SimpleDateFormat("yyyy-MM-dd_HH-mm", Locale.GERMANY).format(Date())
+                        Vault.importFile(ctx, pdf.uri, "Scan_$stamp.pdf", true)
+                        message = "Scan verschlüsselt gespeichert"
+                    } catch (e: Exception) {
+                        message = e.message ?: "Scan fehlgeschlagen"
+                    }
+                    busyText = null
+                }
+            }
+        }
+    }
+
+    fun startScan() {
+        val act = ctx as? Activity
+        if (act == null) {
+            message = "Scanner nicht verfügbar"
+            return
+        }
+        val options = GmsDocumentScannerOptions.Builder()
+            .setGalleryImportAllowed(true)
+            .setPageLimit(20)
+            .setResultFormats(GmsDocumentScannerOptions.RESULT_FORMAT_PDF)
+            .setScannerMode(GmsDocumentScannerOptions.SCANNER_MODE_FULL)
+            .build()
+        MainActivity.picking = true
+        GmsDocumentScanning.getClient(options)
+            .getStartScanIntent(act)
+            .addOnSuccessListener { sender ->
+                scanLauncher.launch(IntentSenderRequest.Builder(sender).build())
+            }
+            .addOnFailureListener { e ->
+                message = "Scanner nicht verfügbar: ${e.message}"
+            }
+    }
+
     val draft = editing
     if (draft != null) {
         NoteEditor(draft, onClose = { editing = null })
@@ -457,7 +507,7 @@ fun HomeScreen(onWiped: () -> Unit) {
                 Crossfade(targetState = tab, modifier = Modifier.weight(1f), label = "tab") { t ->
                     if (t == 0) {
                         if (Vault.files.isEmpty()) {
-                            EmptyHint("Noch keine Dateien.\nTippe unten auf Hinzufügen.")
+                            EmptyHint("Noch keine Dateien.\nTippe unten auf Scannen oder Hinzufügen.")
                         } else {
                             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 100.dp)) {
                                 items(Vault.files, key = { it.id }) { f ->
@@ -495,16 +545,26 @@ fun HomeScreen(onWiped: () -> Unit) {
                 }
             }
 
-            GradientButton(
-                if (tab == 0) "+  Dateien hinzufügen" else "+  Neue Notiz",
-                Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 22.dp)
-            ) {
-                if (tab == 0) {
-                    MainActivity.picking = true
-                    importLauncher.launch(arrayOf("*/*"))
-                } else {
+            if (tab == 0) {
+                Row(
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 22.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    GradientButton("Scannen") { startScan() }
+                    GradientButton("+  Dateien") {
+                        MainActivity.picking = true
+                        importLauncher.launch(arrayOf("*/*"))
+                    }
+                }
+            } else {
+                GradientButton(
+                    "+  Neue Notiz",
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 22.dp)
+                ) {
                     editing = NoteDraft(null, "", "")
                 }
             }
