@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "SafeVault"
+rootProject.name = "PDFStudio"
 include(":app")
